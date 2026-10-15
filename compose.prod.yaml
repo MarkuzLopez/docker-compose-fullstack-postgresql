@@ -1,0 +1,82 @@
+
+services:
+  db:
+    image: postgres:17
+    container_name: django_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-django_db}
+      POSTGRES_USER: ${DB_USER:-django_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-django_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend_network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: django_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DEBUG: "False"
+      DB_NAME: ${DB_NAME:-django_db}
+      DB_USER: ${DB_USER:-django_user}
+      DB_PASSWORD: ${DB_PASSWORD:-django_password}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DJANGO_SECRET_KEY: 'django-insecure-6y*^sp!q_olnuad9*7ljdu8a8a9e%ymj7c%@t_n%2gm8$r&1&^'
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers 3
+      --access-logfile -
+      --error-logfile -"
+    expose:
+      - "8000"
+    volumes:
+      - static_volume:/app/staticfiles
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend_network
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: django_nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - static_volume:/app/staticfiles:ro
+    depends_on:
+      - backend
+    networks:
+      - backend_network
+
+volumes:
+  postgres_data:
+    external: true
+    name: ${POSTGRES_VOLUME_NAME:-django-react-app_postgres_data}
+ 
+  static_volume:
+
+networks:
+  backend_network:
+    driver: bridge
