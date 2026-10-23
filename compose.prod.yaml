@@ -43,6 +43,11 @@ services:
       DB_PORT: "5432"
       DJANGO_SECRET_KEY: 'django-insecure-6y*^sp!q_olnuad9*7ljdu8a8a9e%ymj7c%@t_n%2gm8$r&1&^'
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+
+      # Redis: cache de Django y comunicación con Celery
+      REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     command: >
       sh -c "python manage.py collectstatic --noinput &&
       gunicorn config.wsgi:application
@@ -103,11 +108,62 @@ services:
     networks:
       - backend_network
 
+  redis:
+    image: redis:7-alpine
+    container_name: django_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_network
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: django_celery_worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DEBUG: "False"
+      DB_NAME: ${DB_NAME:-django_db}
+      DB_USER: ${DB_USER:-django_user}
+      DB_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Define DJANGO_SECRET_KEY}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    command: celery -A config worker --loglevel=INFO
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend_network
+
 volumes:
   postgres_data:
     external: true
     name: ${POSTGRES_VOLUME_NAME:-django-react-app_postgres_data}
- 
+
+  redis_data:
+  
   static_volume:
 
 networks:
